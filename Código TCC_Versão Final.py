@@ -1,10 +1,13 @@
-import pandas as pd
+import os
+import warnings
+
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter
 import seaborn as sns
-import warnings
-import os
 
 from sklearn.cluster import KMeans
 from sklearn.metrics import euclidean_distances, silhouette_score, silhouette_samples
@@ -12,26 +15,44 @@ from sklearn.decomposition import PCA
 
 warnings.filterwarnings('ignore')
 
+PASTA_DADOS = None          
 
-# ============================================================
-# CONFIGURAÇÃO GLOBAL DOS GRÁFICOS
-# ============================================================
+PASTA_FIGURAS = 'figuras'   
+DPI_SAIDA = 400             
+SALVAR_SVG = True           
+MOSTRAR_FIGURAS = True     
 
-plt.rcParams['font.family'] = 'Arial'
-plt.rcParams['axes.edgecolor'] = 'black'
-plt.rcParams['axes.linewidth'] = 1.5
+LARGURA_CM = 16.0          
+LARGURA_POL = LARGURA_CM / 2.54
+
+if PASTA_DADOS is None:
+    try:
+        PASTA_DADOS = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        PASTA_DADOS = os.getcwd()
+os.chdir(PASTA_DADOS)
+
+os.makedirs(os.path.join(PASTA_FIGURAS, 'suplementares'), exist_ok=True)
+
+plt.rcParams.update({
+    'font.family': 'sans-serif',
+    'font.sans-serif': ['Arial', 'Liberation Sans', 'DejaVu Sans'],
+    'axes.edgecolor': 'black',
+    'axes.linewidth': 1.5,
+    'axes.labelcolor': 'black',
+    'axes.grid': False,
+    'text.color': 'black',
+    'xtick.color': 'black',
+    'ytick.color': 'black',
+    'xtick.major.width': 1.2,
+    'ytick.major.width': 1.2,
+    'figure.facecolor': 'white',
+    'axes.facecolor': 'white',
+    'savefig.facecolor': 'white',
+    'svg.fonttype': 'path',
+})
 
 
-# ============================================================
-# PADRONIZAÇÃO GLOBAL — cores, nomes, casas decimais, escalas
-# ============================================================
-# Tudo que precisa ser IDÊNTICO em todas as figuras do TCC fica
-# definido uma única vez aqui. Qualquer ajuste de estilo deve ser
-# feito nesse bloco, nunca dentro de cada gráfico individualmente.
-
-# --- Cores fixas por cluster (1 a 6), iguais em TODOS os gráficos
-#     (PCA, perfil médio, cargos por cluster) e em todos os K
-#     testados (K=4, K=5, K=6) ---
 PALETA_CLUSTERS = {
     1: '#1f77b4',   # azul
     2: '#d62728',   # vermelho
@@ -41,8 +62,6 @@ PALETA_CLUSTERS = {
     6: '#8c564b',   # marrom
 }
 
-# --- Nomes padronizados das 19 habilidades (mesma grafia e mesma
-#     quebra de linha em todos os gráficos e tabelas) ---
 LABELS_HABILIDADES = {
     'Python':           'Python',
     'Machine Learning': 'Machine\nLearning',
@@ -67,50 +86,87 @@ LABELS_HABILIDADES = {
 
 
 def rotulos(lista_skills):
-    """Converte uma lista de nomes de habilidades para os rótulos padronizados."""
+    """Converte nomes de habilidades para os rótulos padronizados."""
     return [LABELS_HABILIDADES[s] for s in lista_skills]
 
 
-# --- Casas decimais padronizadas ---
-FMT_PROFICIENCIA = '.2f'   # médias de proficiência (escala 0-4)
-FMT_PERCENTUAL = '.2f'     # percentuais (% da amostra, % por cargo)
-FMT_INERCIA = '.1f'        # inércia do K-Means
-FMT_SILHUETA = '.4f'       # índice de silhueta (diferenças pequenas exigem mais casas)
+def nome_linha(skill):
+    """Rótulo padronizado em uma única linha."""
+    return LABELS_HABILIDADES[skill].replace('\n', ' ')
 
-# --- Escalas fixas para permitir comparação direta entre gráficos ---
-VMIN_PROF, VMAX_PROF = 0, 4        # heatmaps de proficiência (escala original dos dados)
-VMIN_PCT, VMAX_PCT = 0, 100        # heatmaps percentuais de cargos por cluster
 
-# --- Padronização de fontes e legendas ---
-FONTSIZE_TITULO = 13
-FONTSIZE_EIXO = 11
-FONTSIZE_TICK = 10
-FONTSIZE_LEGENDA = 10
+CASAS_PROFICIENCIA = 2      
+CASAS_PERCENTUAL = 2        
+CASAS_INERCIA = 2           
+CASAS_SILHUETA = 4         
+
+VMIN_PROF, VMAX_PROF = 0, 4
+VMIN_PCT, VMAX_PCT = 0, 100
 CMAP_HEATMAP = 'Greys'
+
+FS_EIXO = 9
+FS_TICK = 8
+FS_ANOT = 8
+FS_LEG = 8
+FS_PAINEL = 11
+
+
+def fmt_br(valor, casas=2):
+    """Número no padrão brasileiro: vírgula decimal, ponto de milhar."""
+    s = f'{valor:,.{casas}f}'
+    return s.replace(',', '§').replace('.', ',').replace('§', '.')
+
+
+def formatador_br(casas):
+    """Formatador de eixo/barra de cores no padrão brasileiro."""
+    return FuncFormatter(lambda x, pos: fmt_br(x, casas))
+
+
+def nova_figura(altura_cm, nrows=1, ncols=1, **kwargs):
+    """Cria figura com 16 cm de largura (tamanho real de impressão)."""
+    return plt.subplots(
+        nrows, ncols,
+        figsize=(LARGURA_POL, altura_cm / 2.54),
+        layout='constrained',
+        **kwargs
+    )
+
+
+def estilo_eixos(ax):
+    """Sem grade e sem bordas superior/direita; ticks pretos."""
+    ax.grid(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.tick_params(axis='both', labelsize=FS_TICK, colors='black', length=3.5)
+
+
+def rotulo_painel(ax, letra):
+    """Letra maiúscula, sem pontuação, no canto superior esquerdo do painel."""
+    ax.text(0.0, 1.03, letra, transform=ax.transAxes, fontsize=FS_PAINEL,
+            fontweight='bold', ha='left', va='bottom')
+
+
+def salvar_figura(fig, nome, suplementar=False):
+    """Salva PNG (DPI_SAIDA) e SVG; exibe e fecha a figura."""
+    pasta = os.path.join(PASTA_FIGURAS, 'suplementares') if suplementar else PASTA_FIGURAS
+    caminho = os.path.join(pasta, nome)
+    fig.savefig(caminho + '.png', dpi=DPI_SAIDA)
+    if SALVAR_SVG:
+        fig.savefig(caminho + '.svg')
+    print(f'   figura salva: {caminho}.png')
+    if MOSTRAR_FIGURAS:
+        plt.show()
+    plt.close(fig)
 
 
 def legenda_clusters(k, ax, loc='upper right', titulo='Cluster'):
-    """Desenha uma legenda com as cores fixas de PALETA_CLUSTERS para os
-    clusters 1..k presentes na figura."""
+    """Legenda com as cores fixas de PALETA_CLUSTERS (clusters 1..k)."""
     handles = [
         mpatches.Patch(color=PALETA_CLUSTERS[c], label=f'Cluster {c}')
         for c in range(1, k + 1)
     ]
-    return ax.legend(
-        handles=handles, title=titulo, loc=loc, fontsize=FONTSIZE_LEGENDA
-    )
-
-
-# ============================================================
-# DIRETÓRIO
-# ============================================================
-
-os.chdir(r'C:\Users\victo\OneDrive\Área de Trabalho\TCC')
-
-
-# ============================================================
-# 1 - CARREGAR OS DADOS
-# ============================================================
+    return ax.legend(handles=handles, title=titulo, loc=loc, fontsize=FS_LEG,
+                     title_fontsize=FS_LEG, frameon=False)
 
 skills = pd.read_csv('Employee_Skills_Datset.csv', sep=',', encoding='latin-1')
 desig = pd.read_csv('Employee_Designation.csv', sep=',', encoding='latin-1')
@@ -118,11 +174,6 @@ desig = pd.read_csv('Employee_Designation.csv', sep=',', encoding='latin-1')
 print("=== 1.1 CARREGAMENTO ===")
 print("Skills:", skills.shape)
 print("Designation:", desig.shape)
-
-
-# ============================================================
-# 2 - QUALIDADE DOS DADOS
-# ============================================================
 
 print("\n=== 1.2 QUALIDADE DOS DADOS ===")
 print("\n-- Valores ausentes --")
@@ -142,21 +193,12 @@ print("Vb.Net - valores únicos:", sorted(skills['Vb.Net'].unique()))
 print("\n-- Distribuição de cargos --")
 print(desig['Designation'].value_counts())
 
-
-# ============================================================
-# 3 - TRATAMENTO DA DUPLICATA VB.Net / Vb.Net
-# ============================================================
-
 print("\n=== 1.3 TRATAMENTO DE DUPLICATA ===")
 skills['VB.Net'] = skills['Vb.Net']
 skills.drop(columns=['Vb.Net'], inplace=True)
 print("Corrigido: valores reais de 'Vb.Net' mantidos como 'VB.Net'")
 print("VB.Net após correção:", sorted(skills['VB.Net'].unique()))
 
-
-# ============================================================
-# 4 - LISTA OFICIAL DE 19 SKILLS
-# ============================================================
 
 colunas_skills = [
     'Python', 'Machine Learning', 'Deep Learning', 'Data Analysis',
@@ -176,184 +218,93 @@ skills_dev_box = [
 print(f"Skills para análise: {len(colunas_skills)}")
 
 
-# ============================================================
-# 5 - INTEGRAÇÃO DAS BASES VIA Eid
-# ============================================================
-
 base = pd.merge(skills, desig, on='Eid', how='inner')
 print("\n=== 1.4 INTEGRAÇÃO ===")
 print("Base integrada:", base.shape)
 
-
-# ============================================================
-# 6 - ESTATÍSTICAS DESCRITIVAS
-# ============================================================
-
 print("\n=== 1.5 ESTATÍSTICAS DESCRITIVAS ===")
 print(base[colunas_skills].describe().round(2))
 
-
-# ============================================================
-# FIGURA 1 - DISTRIBUIÇÃO DOS CARGOS
-# ============================================================
+print("\n=== FIGURA 1 - DISTRIBUIÇÃO DOS CARGOS ===")
 
 contagem = base['Designation'].value_counts()
 
-fig, ax = plt.subplots(figsize=(10, 5))
+fig, ax = nova_figura(7.5)
 ax.barh(contagem.index, contagem.values, color='white', edgecolor='black', linewidth=1.2)
 
 for i, valor in enumerate(contagem.values):
-    ax.text(valor + 3, i, str(valor), va='center', fontsize=FONTSIZE_TICK, color='black')
+    ax.text(valor + contagem.values.max() * 0.012, i, fmt_br(valor, 0),
+            va='center', fontsize=FS_ANOT, color='black')
 
-ax.set_title('Distribuição dos Cargos (Designations)', fontsize=FONTSIZE_TITULO)
-ax.set_xlabel('Número de Funcionários', fontsize=FONTSIZE_EIXO)
-ax.set_ylabel('Cargo', fontsize=FONTSIZE_EIXO)
-ax.tick_params(axis='both', labelsize=FONTSIZE_TICK, colors='black')
-ax.grid(False)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-fig.patch.set_facecolor('white')
-ax.set_facecolor('white')
-plt.tight_layout()
-plt.show()
+ax.set_xlabel('Número de funcionários', fontsize=FS_EIXO)
+ax.set_ylabel('Cargo', fontsize=FS_EIXO)
+ax.set_xlim(0, contagem.values.max() * 1.10)
+ax.xaxis.set_major_formatter(formatador_br(0))
+estilo_eixos(ax)
+salvar_figura(fig, 'fig01_cargos')
 
+def figura_caixas(lista, nome_arquivo, altura_cm, rotacao):
+    ordem = base[lista].mean().sort_values().index
 
-# ============================================================
-# FIGURA 2a - DIAGRAMA DE CAIXA — DATA SCIENCE E IA
-# ============================================================
-
-ordem_ds = base[skills_ds].mean().sort_values().index
-
-fig, ax = plt.subplots(figsize=(12, 6))
-
-base[ordem_ds].boxplot(
-    ax=ax, patch_artist=False, widths=0.5,
-    medianprops=dict(color='black', linewidth=1.5),
-    boxprops=dict(color='black', linewidth=1.2),
-    whiskerprops=dict(color='black', linewidth=1.2),
-    capprops=dict(color='black', linewidth=1.2),
-    flierprops=dict(marker='o', markerfacecolor='black',
-                     markeredgecolor='black', markersize=4, alpha=0.7)
-)
-
-ax.set_title('Distribuição das Habilidades Técnicas — Ciência de Dados e IA',
-              fontsize=FONTSIZE_TITULO)
-ax.set_ylabel('Nível de Proficiência (0 a 4)', fontsize=FONTSIZE_EIXO)
-ax.set_xlabel('Habilidades Técnicas', fontsize=FONTSIZE_EIXO)
-ax.set_xticklabels(rotulos(ordem_ds), rotation=0, fontsize=FONTSIZE_TICK + 3)
-ax.tick_params(axis='y', labelsize=FONTSIZE_TICK + 2)
-ax.set_ylim(VMIN_PROF, VMAX_PROF)
-ax.axhline(y=2, color='black', linestyle='--', linewidth=1.2)
-ax.grid(False)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-fig.patch.set_facecolor('white')
-ax.set_facecolor('white')
-plt.tight_layout()
-plt.show()
+    fig, ax = nova_figura(altura_cm)
+    base[ordem].boxplot(
+        ax=ax, patch_artist=False, widths=0.5,
+        medianprops=dict(color='black', linewidth=1.5),
+        boxprops=dict(color='black', linewidth=1.2),
+        whiskerprops=dict(color='black', linewidth=1.2),
+        capprops=dict(color='black', linewidth=1.2),
+        flierprops=dict(marker='o', markerfacecolor='black',
+                        markeredgecolor='black', markersize=3, alpha=0.7)
+    )
+    if rotacao:
+        ax.set_xticklabels([nome_linha(s) for s in ordem], rotation=rotacao,
+                           ha='right', rotation_mode='anchor', fontsize=FS_TICK)
+    else:
+        ax.set_xticklabels(rotulos(ordem), rotation=0, fontsize=FS_TICK)
+    ax.set_ylabel('Nível de proficiência (0 a 4)', fontsize=FS_EIXO)
+    ax.set_xlabel('Habilidades técnicas', fontsize=FS_EIXO)
+    ax.set_ylim(VMIN_PROF, VMAX_PROF)
+    ax.set_yticks([0, 1, 2, 3, 4])
+    ax.yaxis.set_major_formatter(formatador_br(0))
+    ax.axhline(y=2, color='black', linestyle='--', linewidth=1.2)
+    estilo_eixos(ax)
+    salvar_figura(fig, nome_arquivo)
 
 
-# ============================================================
-# FIGURA 2b - DIAGRAMA DE CAIXA — DESENVOLVIMENTO E FRAMEWORKS
-# ============================================================
+print("\n=== FIGURA 2 - CAIXAS: CIÊNCIA DE DADOS E IA ===")
+figura_caixas(skills_ds, 'fig02_caixas_ciencia_dados', altura_cm=7.5, rotacao=0)
 
-ordem_dev = base[skills_dev_box].mean().sort_values().index
+print("\n=== FIGURA 3 - CAIXAS: DESENVOLVIMENTO E FRAMEWORKS ===")
+figura_caixas(skills_dev_box, 'fig03_caixas_desenvolvimento', altura_cm=8.5, rotacao=45)
 
-fig, ax = plt.subplots(figsize=(18, 6))
+def figura_histogramas(lista, nrows, ncols, altura_cm, nome_arquivo):
+    fig, axes = nova_figura(altura_cm, nrows, ncols, sharey=True)
+    axes = np.atleast_1d(axes).flatten()
 
-base[ordem_dev].boxplot(
-    ax=ax, patch_artist=False, widths=0.5,
-    medianprops=dict(color='black', linewidth=1.5),
-    boxprops=dict(color='black', linewidth=1.2),
-    whiskerprops=dict(color='black', linewidth=1.2),
-    capprops=dict(color='black', linewidth=1.2),
-    flierprops=dict(marker='o', markerfacecolor='black',
-                     markeredgecolor='black', markersize=4, alpha=0.7)
-)
+    for i, col in enumerate(lista):
+        ax = axes[i]
+        ax.hist(base[col], bins=np.arange(-0.5, 5, 1), color='white',
+                edgecolor='black', linewidth=1.0)
+        ax.set_title(nome_linha(col), fontsize=FS_EIXO, color='black', pad=3)
+        ax.set_xticks([0, 1, 2, 3, 4])
+        ax.set_xlim(-0.6, 4.6)
+        ax.yaxis.set_major_formatter(formatador_br(0))
+        estilo_eixos(ax)
 
-ax.set_title('Distribuição das Habilidades Técnicas — Desenvolvimento e Frameworks',
-              fontsize=FONTSIZE_TITULO)
-ax.set_ylabel('Nível de Proficiência (0 a 4)', fontsize=FONTSIZE_EIXO)
-ax.set_xlabel('Habilidades Técnicas', fontsize=FONTSIZE_EIXO)
-ax.set_xticklabels(rotulos(ordem_dev), rotation=0, fontsize=FONTSIZE_TICK + 3)
-ax.tick_params(axis='y', labelsize=FONTSIZE_TICK + 2)
-ax.set_ylim(VMIN_PROF, VMAX_PROF)
-ax.axhline(y=2, color='black', linestyle='--', linewidth=1.2)
-ax.grid(False)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-fig.patch.set_facecolor('white')
-ax.set_facecolor('white')
-plt.tight_layout()
-plt.show()
+    for j in range(len(lista), len(axes)):
+        axes[j].set_visible(False)
+
+    fig.supxlabel('Nível de proficiência (0 a 4)', fontsize=FS_EIXO)
+    fig.supylabel('Frequência', fontsize=FS_EIXO)
+    salvar_figura(fig, nome_arquivo)
 
 
-# ============================================================
-# FIGURA 3 - HISTOGRAMAS DATA SCIENCE
-# ============================================================
+print("\n=== FIGURA 4 - HISTOGRAMAS: CIÊNCIA DE DADOS E IA ===")
+figura_histogramas(skills_ds, 2, 3, 9.0, 'fig04_histogramas_ciencia_dados')
 
-fig, axes = plt.subplots(2, 3, figsize=(15, 9))
-axes = axes.flatten()
+print("\n=== FIGURA 5 - HISTOGRAMAS: DESENVOLVIMENTO E FRAMEWORKS ===")
+figura_histogramas(skills_dev_box, 4, 4, 14.5, 'fig05_histogramas_desenvolvimento')
 
-for i, col in enumerate(skills_ds):
-    axes[i].hist(base[col], bins=5, color='white', edgecolor='black', linewidth=1.2)
-    axes[i].set_title(LABELS_HABILIDADES[col].replace('\n', ' '),
-                       fontsize=FONTSIZE_TITULO + 3, color='black')
-    axes[i].set_xlabel('Proficiência (0 a 4)', fontsize=FONTSIZE_EIXO + 3, color='black')
-    axes[i].set_ylabel('Frequência', fontsize=FONTSIZE_EIXO + 3, color='black')
-    axes[i].set_xticks([0, 1, 2, 3, 4])
-    axes[i].tick_params(axis='both', labelsize=FONTSIZE_TICK, colors='black')
-    axes[i].grid(False)
-    axes[i].spines['top'].set_visible(False)
-    axes[i].spines['right'].set_visible(False)
-    axes[i].spines['left'].set_color('black')
-    axes[i].spines['bottom'].set_color('black')
-    axes[i].spines['left'].set_linewidth(1.2)
-    axes[i].spines['bottom'].set_linewidth(1.2)
-    axes[i].set_facecolor('white')
-
-fig.suptitle('Distribuição de Proficiência — Ciência de Dados e IA', fontsize=FONTSIZE_TITULO + 4)
-fig.patch.set_facecolor('white')
-plt.subplots_adjust(hspace=0.55, wspace=0.35)
-plt.show()
-
-
-# ============================================================
-# FIGURA 4 - HISTOGRAMAS DESENVOLVIMENTO
-# ============================================================
-
-fig, axes = plt.subplots(5, 3, figsize=(16, 18))
-axes = axes.flatten()
-
-for i, col in enumerate(skills_dev_box):
-    axes[i].hist(base[col], bins=5, color='white', edgecolor='black', linewidth=1.2)
-    axes[i].set_title(LABELS_HABILIDADES[col].replace('\n', ' '),
-                       fontsize=FONTSIZE_TITULO + 3, color='black')
-    axes[i].set_xlabel('Proficiência (0 a 4)', fontsize=FONTSIZE_EIXO + 3, color='black')
-    axes[i].set_ylabel('Frequência', fontsize=FONTSIZE_EIXO + 3, color='black')
-    axes[i].set_xticks([0, 1, 2, 3, 4])
-    axes[i].tick_params(axis='both', labelsize=FONTSIZE_TICK, colors='black')
-    axes[i].grid(False)
-    axes[i].spines['top'].set_visible(False)
-    axes[i].spines['right'].set_visible(False)
-    axes[i].spines['left'].set_color('black')
-    axes[i].spines['bottom'].set_color('black')
-    axes[i].spines['left'].set_linewidth(1.2)
-    axes[i].spines['bottom'].set_linewidth(1.2)
-    axes[i].set_facecolor('white')
-
-for j in range(len(skills_dev_box), len(axes)):
-    fig.delaxes(axes[j])
-
-fig.suptitle('Distribuição de Proficiência — Desenvolvimento e Frameworks', fontsize=FONTSIZE_TITULO + 4)
-fig.patch.set_facecolor('white')
-plt.subplots_adjust(hspace=0.65, wspace=0.35)
-plt.show()
-
-
-# ============================================================
-# TABELA 2 - ESTATÍSTICAS DESCRITIVAS CUSTOMIZADAS
-# ============================================================
 
 desc_custom = pd.DataFrame({
     'Moda': base[colunas_skills].mode().iloc[0],
@@ -363,7 +314,6 @@ desc_custom = pd.DataFrame({
 }).reset_index()
 
 desc_custom.columns = ['Skill', 'Moda', 'Média', 'Desvio-Padrão', 'Amplitude']
-desc_custom['Skill'] = desc_custom['Skill'].map(lambda s: s)  # mantém nome "cheio" na tabela
 
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
@@ -373,11 +323,6 @@ pd.set_option('display.float_format', lambda x: f'{x:.2f}')
 
 print("\n=== TABELA 2 - ESTATÍSTICAS DESCRITIVAS ===\n")
 print(desc_custom.to_string(index=False))
-
-
-# ============================================================
-# TABELA 3 - MATRIZ DE CORRELAÇÃO
-# ============================================================
 
 print("\n=== MATRIZ DE CORRELAÇÃO ===\n")
 matriz_correlacao = base[colunas_skills].corr(method='pearson').round(2)
@@ -410,11 +355,7 @@ print(f"Correlações moderadas (0,40 a 0,69): {len(moderadas)}")
 print(f"Correlações fracas (< 0,40): {len(fracas)}")
 
 
-# ============================================================
-# FIGURA 5 - ELBOW METHOD
-# ============================================================
-
-print("\n=== FIGURA 5 - ELBOW METHOD ===")
+print("\n=== FIGURA 6 - ELBOW METHOD ===")
 
 inercias_elbow = []
 k_range = range(2, 12)
@@ -424,29 +365,19 @@ for k in k_range:
     km.fit(base[colunas_skills])
     inercias_elbow.append(km.inertia_)
 
-fig, ax = plt.subplots(figsize=(9, 5))
+fig, ax = nova_figura(7.5)
 ax.plot(list(k_range), inercias_elbow, color='black', linewidth=1.5,
         marker='o', markerfacecolor='white', markeredgecolor='black',
-        markeredgewidth=1.5, markersize=7)
-ax.set_title('Método do Cotovelo (Elbow Method)', fontsize=FONTSIZE_TITULO)
-ax.set_xlabel('Número de Clusters (K)', fontsize=FONTSIZE_EIXO)
-ax.set_ylabel('Inércia', fontsize=FONTSIZE_EIXO)
+        markeredgewidth=1.5, markersize=6)
+ax.set_xlabel('Número de clusters (K)', fontsize=FS_EIXO)
+ax.set_ylabel('Inércia', fontsize=FS_EIXO)
 ax.set_xticks(list(k_range))
-ax.tick_params(axis='both', labelsize=FONTSIZE_TICK, colors='black')
-ax.grid(False)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-fig.patch.set_facecolor('white')
-ax.set_facecolor('white')
-plt.tight_layout()
-plt.show()
+ax.yaxis.set_major_formatter(formatador_br(0))
+estilo_eixos(ax)
+salvar_figura(fig, 'fig06_cotovelo')
 
 
-# ============================================================
-# FIGURA 6 - SILHOUETTE POR K
-# ============================================================
-
-print("\n=== FIGURA 6 - SILHOUETTE POR K ===")
+print("\n=== FIGURA 7 - SILHOUETTE POR K ===")
 
 silhuetas_k = []
 for k in k_range:
@@ -454,29 +385,19 @@ for k in k_range:
     labels = km.fit_predict(base[colunas_skills])
     silhuetas_k.append(silhouette_score(base[colunas_skills], labels))
 
-fig, ax = plt.subplots(figsize=(9, 5))
+fig, ax = nova_figura(7.5)
 ax.plot(list(k_range), silhuetas_k, color='black', linewidth=1.5,
         marker='o', markerfacecolor='white', markeredgecolor='black',
-        markeredgewidth=1.5, markersize=7)
-ax.set_title('Índice de Silhouette por Número de Clusters', fontsize=FONTSIZE_TITULO)
-ax.set_xlabel('Número de Clusters (K)', fontsize=FONTSIZE_EIXO)
-ax.set_ylabel('Índice de Silhouette Médio', fontsize=FONTSIZE_EIXO)
+        markeredgewidth=1.5, markersize=6)
+ax.set_xlabel('Número de clusters (K)', fontsize=FS_EIXO)
+ax.set_ylabel('Índice de Silhouette médio', fontsize=FS_EIXO)
 ax.set_xticks(list(k_range))
-ax.tick_params(axis='both', labelsize=FONTSIZE_TICK, colors='black')
-ax.grid(False)
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-fig.patch.set_facecolor('white')
-ax.set_facecolor('white')
-plt.tight_layout()
-plt.show()
+ax.yaxis.set_major_formatter(formatador_br(2))
+estilo_eixos(ax)
+salvar_figura(fig, 'fig07_silhouette')
 
 
-# ============================================================
-# FIGURA 9 - COMPARAÇÃO K=4, K=5 E K=6 (inércia e silhouette)
-# ============================================================
-
-print("\n=== FIGURA 9 - COMPARAÇÃO K=4, K=5 E K=6 ===\n")
+print("\n=== FIGURA 8 - COMPARAÇÃO K=4, K=5 E K=6 ===\n")
 
 resultados_k = {}
 
@@ -491,51 +412,41 @@ for k in [4, 5, 6]:
         'centroids': pd.DataFrame(km.cluster_centers_, columns=colunas_skills)
     }
     print(
-        f"K={k} | Inércia: {resultados_k[k]['inercia']:{FMT_INERCIA}} | "
-        f"Silhueta: {resultados_k[k]['silhueta']:{FMT_SILHUETA}}"
+        f"K={k} | Inércia: {fmt_br(resultados_k[k]['inercia'], CASAS_INERCIA)} | "
+        f"Silhouette: {fmt_br(resultados_k[k]['silhueta'], CASAS_SILHUETA)}"
     )
 
 ks = [4, 5, 6]
 inercias = [resultados_k[k]['inercia'] for k in ks]
 silhuetas = [resultados_k[k]['silhueta'] for k in ks]
+rotulos_k = ['K=4', 'K=5', 'K=6']
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+fig, axes = nova_figura(7.0, 1, 2)
 
-axes[0].bar(['K=4', 'K=5', 'K=6'], inercias, color='white',
-            edgecolor='black', linewidth=1.2, width=0.5)
+axes[0].bar(rotulos_k, inercias, color='white', edgecolor='black',
+            linewidth=1.2, width=0.5)
 for i, v in enumerate(inercias):
-    axes[0].text(i, v + max(inercias) * 0.01, f'{v:{FMT_INERCIA}}',
-                 ha='center', fontsize=FONTSIZE_LEGENDA + 1)
-axes[0].set_title('Inércia por Número de Clusters', fontsize=FONTSIZE_TITULO)
-axes[0].set_ylabel('Inércia', fontsize=FONTSIZE_EIXO)
-axes[0].tick_params(axis='both', labelsize=FONTSIZE_TICK)
-axes[0].grid(False)
-axes[0].spines['top'].set_visible(False)
-axes[0].spines['right'].set_visible(False)
-axes[0].set_facecolor('white')
+    axes[0].text(i, v + max(inercias) * 0.02, fmt_br(v, CASAS_INERCIA),
+                 ha='center', fontsize=FS_ANOT)
+axes[0].set_ylabel('Inércia', fontsize=FS_EIXO)
+axes[0].set_ylim(0, max(inercias) * 1.15)
+axes[0].yaxis.set_major_formatter(formatador_br(0))
+estilo_eixos(axes[0])
+rotulo_painel(axes[0], 'A')
 
-axes[1].bar(['K=4', 'K=5', 'K=6'], silhuetas, color='white',
-            edgecolor='black', linewidth=1.2, width=0.5)
+axes[1].bar(rotulos_k, silhuetas, color='white', edgecolor='black',
+            linewidth=1.2, width=0.5)
 for i, v in enumerate(silhuetas):
-    axes[1].text(i, v + 0.002, f'{v:{FMT_SILHUETA}}',
-                 ha='center', fontsize=FONTSIZE_LEGENDA + 1)
-axes[1].set_title('Índice de Silhouette por Número de Clusters', fontsize=FONTSIZE_TITULO)
-axes[1].set_ylabel('Silhouette Médio', fontsize=FONTSIZE_EIXO)
-axes[1].tick_params(axis='both', labelsize=FONTSIZE_TICK)
+    axes[1].text(i, v + max(silhuetas) * 0.02, fmt_br(v, CASAS_SILHUETA),
+                 ha='center', fontsize=FS_ANOT)
+axes[1].set_ylabel('Índice de Silhouette médio', fontsize=FS_EIXO)
 axes[1].set_ylim(0, max(silhuetas) * 1.2)
-axes[1].grid(False)
-axes[1].spines['top'].set_visible(False)
-axes[1].spines['right'].set_visible(False)
-axes[1].set_facecolor('white')
+axes[1].set_yticks(np.arange(0, max(silhuetas) * 1.2, 0.05))
+axes[1].yaxis.set_major_formatter(formatador_br(2))
+estilo_eixos(axes[1])
+rotulo_painel(axes[1], 'B')
 
-fig.patch.set_facecolor('white')
-plt.tight_layout()
-plt.show()
-
-
-# ============================================================
-# DEFINIÇÃO DO K FINAL (usado nas análises detalhadas do TCC)
-# ============================================================
+salvar_figura(fig, 'fig08_comparacao_k4_k5_k6')
 
 k_final = 5
 kmeans = resultados_k[k_final]['modelo']
@@ -546,10 +457,6 @@ base['Cluster'] = clusters
 print(f"\n=== K-MEANS APLICADO (K={k_final}) ===")
 print(base['Cluster'].value_counts().sort_index())
 
-
-# ============================================================
-# CENTRÓIDES E DISTÂNCIAS (K final)
-# ============================================================
 
 print("\n=== CENTRÓIDES ===")
 print(centroids.round(2))
@@ -564,64 +471,77 @@ for i in range(len(base)):
 
 base['Distancia_Centroide'] = distancias
 
+print("\n=== FIGURA 9 - PCA (K=4, K=5, K=6) ===")
 
-# ============================================================
-# FIGURAS 7, 8 e 8b - PCA 2D PARA K=4, K=5 E K=6
-# Cores fixas por cluster (PALETA_CLUSTERS), legenda padronizada
-# ============================================================
+pca_plot = PCA(n_components=2)
+X_pca_plot = pca_plot.fit_transform(base[colunas_skills])
+var_exp = pca_plot.explained_variance_ratio_
 
-for k_plot in [4, 5, 6]:
+print(f"Variância explicada PC1: {fmt_br(var_exp[0] * 100, 2)}%")
+print(f"Variância explicada PC2: {fmt_br(var_exp[1] * 100, 2)}%")
+print(f"Variância explicada PC1+PC2: {fmt_br(var_exp[:2].sum() * 100, 2)}%  "
+      f"(informar no texto: a PCA serve apenas para visualização)")
 
+fig, axes = plt.subplots(
+    1, 3, figsize=(LARGURA_POL, 7.8 / 2.54), sharex=True, sharey=True
+)
+fig.subplots_adjust(left=0.085, right=0.995, top=0.91, bottom=0.27, wspace=0.06)
+
+for ax, k_plot, letra in zip(axes, [4, 5, 6], ['A', 'B', 'C']):
     labels_plot = resultados_k[k_plot]['labels']
-    cents_plot = resultados_k[k_plot]['centroids']
-
-    pca_plot = PCA(n_components=2)
-    X_pca_plot = pca_plot.fit_transform(base[colunas_skills])
-    cents_pca = pca_plot.transform(cents_plot)
-    var_exp = pca_plot.explained_variance_ratio_
-
-    # cluster salvo como 0-based; +1 para exibir/colorir como 1..k
+    cents_pca = pca_plot.transform(resultados_k[k_plot]['centroids'])
     cores_pontos = [PALETA_CLUSTERS[label + 1] for label in labels_plot]
 
-    fig, ax = plt.subplots(figsize=(10, 7))
+    ax.scatter(X_pca_plot[:, 0], X_pca_plot[:, 1], c=cores_pontos,
+               alpha=0.7, s=7, linewidths=0)
+    ax.scatter(cents_pca[:, 0], cents_pca[:, 1], c='black', s=45,
+               marker='X', zorder=5)
+    estilo_eixos(ax)
+    ax.xaxis.set_major_formatter(formatador_br(0))
+    ax.yaxis.set_major_formatter(formatador_br(0))
+    rotulo_painel(ax, letra)
 
-    ax.scatter(
-        X_pca_plot[:, 0], X_pca_plot[:, 1],
-        c=cores_pontos, alpha=0.7, s=40
-    )
+axes[0].set_ylabel(f'PC2 ({fmt_br(var_exp[1] * 100, 2)}% da variância)',
+                   fontsize=FS_EIXO)
+fig.supxlabel(f'PC1 ({fmt_br(var_exp[0] * 100, 2)}% da variância)',
+              fontsize=FS_EIXO, y=0.115)
 
-    ax.scatter(
-        cents_pca[:, 0], cents_pca[:, 1],
-        c='black', s=200, marker='X', zorder=5
-    )
+# Legenda única e completa (clusters 1 a 6 + centroide)
+handles = [mpatches.Patch(color=PALETA_CLUSTERS[c], label=f'Cluster {c}')
+           for c in range(1, 7)]
+handles.append(Line2D([0], [0], marker='X', color='w', markerfacecolor='black',
+                      markersize=7, label='Centroide'))
+fig.legend(handles=handles, loc='lower center', ncol=7, fontsize=FS_LEG,
+           frameon=False, handletextpad=0.4, columnspacing=1.0,
+           bbox_to_anchor=(0.5, 0.0))
 
-    ax.set_title(f'Clusters K-Means — Projeção PCA (K={k_plot})', fontsize=FONTSIZE_TITULO)
-    ax.set_xlabel(f'PC1 ({var_exp[0]*100:{FMT_PERCENTUAL}}% da variância)', fontsize=FONTSIZE_EIXO)
-    ax.set_ylabel(f'PC2 ({var_exp[1]*100:{FMT_PERCENTUAL}}% da variância)', fontsize=FONTSIZE_EIXO)
-    ax.tick_params(axis='both', labelsize=FONTSIZE_TICK)
-
-    legenda_clusters(k_plot, ax, loc='upper right')
-
-    ax.grid(False)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
-
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# HEATMAPS DE PERFIL MÉDIO POR CLUSTER — K=4, K=5 E K=6
-# Escala de cor fixa (0 a 4) e nomes de habilidades padronizados,
-# para permitir comparação direta entre os mapas de calor.
-# ============================================================
+salvar_figura(fig, 'fig09_pca_k4_k5_k6')
 
 perfis_por_k = {}
 
 
-def plot_heatmap_perfil(k, skills_subset, figsize):
+def anotacoes_br(valores, casas):
+    """Matriz de textos com vírgula decimal para anotar o heatmap."""
+    return np.array([[fmt_br(v, casas) for v in linha] for linha in valores])
+
+
+def estilizar_heatmap(ax, rot_x):
+    for s in ax.spines.values():
+        s.set_visible(False)
+    ax.tick_params(axis='both', length=0, labelsize=FS_TICK)
+    if rot_x:
+        plt.setp(ax.get_xticklabels(), rotation=rot_x, ha='right',
+                 rotation_mode='anchor')
+    else:
+        plt.setp(ax.get_xticklabels(), rotation=0)
+    plt.setp(ax.get_yticklabels(), rotation=0)
+    cbar = ax.collections[0].colorbar
+    cbar.outline.set_visible(False)
+    cbar.ax.tick_params(labelsize=FS_TICK, length=3)
+    cbar.ax.yaxis.label.set_size(FS_EIXO)
+
+
+def plot_heatmap_perfil(k, skills_subset, nome_base, altura_cm, rot_x):
     labels_k = resultados_k[k]['labels']
     base_temp = base.copy()
     base_temp['Cluster_temp'] = labels_k
@@ -631,45 +551,44 @@ def plot_heatmap_perfil(k, skills_subset, figsize):
     perfil_k.index.name = 'Cluster'
     perfil_plot = perfil_k.rename(columns=lambda s: LABELS_HABILIDADES[s])
 
-    fig, ax = plt.subplots(figsize=figsize)
-
+    fig, ax = nova_figura(altura_cm)
     sns.heatmap(
-        perfil_plot, ax=ax, annot=True, fmt=FMT_PROFICIENCIA,
+        perfil_plot, ax=ax, annot=anotacoes_br(perfil_plot.values, CASAS_PROFICIENCIA),
+        fmt='', annot_kws={'size': FS_ANOT},
         cmap=CMAP_HEATMAP, vmin=VMIN_PROF, vmax=VMAX_PROF,
         linewidths=0.5, linecolor='white',
-        cbar_kws={'label': 'Proficiência média (escala 0 a 4)'}
+        cbar_kws={'label': 'Proficiência média (escala 0 a 4)',
+                  'format': formatador_br(1)}
     )
+    ax.set_xlabel('Habilidades técnicas', fontsize=FS_EIXO)
+    ax.set_ylabel('Cluster', fontsize=FS_EIXO)
+    estilizar_heatmap(ax, rot_x)
 
-    ax.set_title(f'Perfil Médio de Proficiência por Cluster (K={k})', fontsize=FONTSIZE_TITULO)
-    ax.set_xlabel('Habilidades Técnicas', fontsize=FONTSIZE_EIXO)
-    ax.set_ylabel('Cluster', fontsize=FONTSIZE_EIXO)
-    ax.tick_params(axis='x', rotation=45, labelsize=FONTSIZE_TICK)
-    ax.tick_params(axis='y', rotation=0, labelsize=FONTSIZE_TICK)
-
-    fig.patch.set_facecolor('white')
-    plt.tight_layout()
-    plt.show()
-
-    return perfil_k  # devolve com nomes originais (sem quebra de linha) p/ uso posterior
+    suplementar = (k != k_final)
+    nome = f'{nome_base}_k{k}'
+    salvar_figura(fig, nome, suplementar=suplementar)
+    return perfil_k
 
 
 for k in [4, 5, 6]:
     print(f"\n=== PERFIL MÉDIO POR CLUSTER (K={k}) — CIÊNCIA DE DADOS/IA ===")
-    perfil_ds_k = plot_heatmap_perfil(k, skills_ds, figsize=(10, 0.9 * k + 2))
+    perfil_ds_k = plot_heatmap_perfil(
+        k, skills_ds,
+        'fig10_perfil_ciencia_dados' if k == k_final else 'perfil_ciencia_dados',
+        altura_cm=0.75 * k + 2.6, rot_x=0)
     print(perfil_ds_k)
 
     print(f"\n=== PERFIL MÉDIO POR CLUSTER (K={k}) — DESENVOLVIMENTO/FRAMEWORKS ===")
-    perfil_dev_k = plot_heatmap_perfil(k, skills_dev_box, figsize=(16, 0.9 * k + 2))
+    perfil_dev_k = plot_heatmap_perfil(
+        k, skills_dev_box,
+        'fig11_perfil_desenvolvimento' if k == k_final else 'perfil_desenvolvimento',
+        altura_cm=0.75 * k + 3.4, rot_x=45)
     print(perfil_dev_k)
 
     base_temp = base.copy()
     base_temp['Cluster_temp'] = resultados_k[k]['labels']
     perfis_por_k[k] = base_temp.groupby('Cluster_temp')[colunas_skills].mean().round(2)
 
-
-# ============================================================
-# CARACTERIZAÇÃO DESCRITIVA DOS CLUSTERS — K=4, K=5 E K=6
-# ============================================================
 
 for k in [4, 5, 6]:
     print(f"\n=== CARACTERIZAÇÃO DESCRITIVA DOS CLUSTERS (K={k}) ===\n")
@@ -684,22 +603,19 @@ for k in [4, 5, 6]:
         tamanho = (base_temp['Cluster_temp'] == c).sum()
         percentual = tamanho / len(base_temp) * 100
 
-        print(f"--- Cluster {c+1} ({tamanho} funcionários | {percentual:{FMT_PERCENTUAL}}% da base) ---")
+        print(f"--- Cluster {c+1} ({tamanho} funcionários | "
+              f"{fmt_br(percentual, CASAS_PERCENTUAL)}% da base) ---")
         for skill, valor in top3.items():
-            print(f"    • {LABELS_HABILIDADES[skill].replace(chr(10), ' ')}: {valor:{FMT_PROFICIENCIA}}")
+            print(f"    • {nome_linha(skill)}: {fmt_br(valor, CASAS_PROFICIENCIA)}")
         print()
 
-
-# ============================================================
-# ÍNDICE DE SILHUETA DETALHADO (K final)
-# ============================================================
 
 silhueta_media = silhouette_score(base[colunas_skills], clusters)
 silhueta_amostras = silhouette_samples(base[colunas_skills], clusters)
 base['Silhueta'] = silhueta_amostras
 
 print(f"\n=== ÍNDICE DE SILHUETA (K={k_final}) ===")
-print(f"Silhueta média geral: {silhueta_media:{FMT_SILHUETA}}")
+print(f"Silhueta média geral: {fmt_br(silhueta_media, CASAS_SILHUETA)}")
 print("\nSilhueta média por cluster:")
 print(base.groupby('Cluster')['Silhueta'].mean().round(4).to_string())
 
@@ -710,10 +626,6 @@ elif silhueta_media >= 0.25:
 else:
     print("\nInterpretação: estrutura FRACA (< 0,25)")
 
-
-# ============================================================
-# GAP E FRONTEIRA (K final)
-# ============================================================
 
 gap_cluster = base.groupby('Cluster')['Distancia_Centroide'].mean().round(3)
 print("\n=== GAP MÉDIO POR CLUSTER ===")
@@ -745,16 +657,6 @@ base['Na_Fronteira'] = base['Razao_Proximidade'] <= 1.5
 print("\n=== NA FRONTEIRA ===")
 print(base['Na_Fronteira'].value_counts())
 
-
-# ============================================================
-# HEATMAPS CARGOS POR CLUSTER — K=4, K=5 E K=6
-# Percentual com escala fixa 0-100% (comparável entre K);
-# absoluto com escala fixa pelo maior valor entre os três K
-# (também comparável entre K=4, K=5 e K=6).
-# ============================================================
-
-# calcula o valor máximo absoluto entre as três tabelas, para
-# fixar uma única escala de cor nos heatmaps em números absolutos
 _max_abs_cargos = 0
 for k in [4, 5, 6]:
     base_temp = base.copy()
@@ -769,16 +671,21 @@ def plot_heatmap_cargos(k, normalizar=False):
 
     if normalizar:
         tabela = (
-            pd.crosstab(base_temp['Cluster_temp'], base_temp['Designation'], normalize='index') * 100
+            pd.crosstab(base_temp['Cluster_temp'], base_temp['Designation'],
+                        normalize='index') * 100
         ).round(2)
-        fmt = FMT_PERCENTUAL
+        anot = anotacoes_br(tabela.values, CASAS_PERCENTUAL)
         label_cbar = '% de funcionários dentro do cluster'
         vmin, vmax = VMIN_PCT, VMAX_PCT
+        fmt_cbar = formatador_br(0)
+        nome_base = 'fig13_cargos_cluster_percentual'
     else:
         tabela = pd.crosstab(base_temp['Cluster_temp'], base_temp['Designation'])
-        fmt = 'd'
+        anot = anotacoes_br(tabela.values, 0)
         label_cbar = 'Quantidade de funcionários'
         vmin, vmax = 0, _max_abs_cargos
+        fmt_cbar = formatador_br(0)
+        nome_base = 'fig12_cargos_cluster_absoluto'
 
     tabela.index = range(1, k + 1)
     tabela.index.name = 'Cluster'
@@ -787,23 +694,20 @@ def plot_heatmap_cargos(k, normalizar=False):
     print(f"\n=== DISTRIBUIÇÃO {tipo.upper()} DE CARGOS POR CLUSTER (K={k}) ===\n")
     print(tabela.to_string())
 
-    fig, ax = plt.subplots(figsize=(12, 0.9 * k + 2))
-
+    fig, ax = nova_figura(0.75 * k + 4.6)
     sns.heatmap(
-        tabela, ax=ax, annot=True, fmt=fmt, cmap=CMAP_HEATMAP,
-        vmin=vmin, vmax=vmax,
-        linewidths=0.5, linecolor='white', cbar_kws={'label': label_cbar}
+        tabela, ax=ax, annot=anot, fmt='', annot_kws={'size': FS_ANOT},
+        cmap=CMAP_HEATMAP, vmin=vmin, vmax=vmax,
+        linewidths=0.5, linecolor='white',
+        cbar_kws={'label': label_cbar, 'format': fmt_cbar}
     )
+    ax.set_xlabel('Cargo', fontsize=FS_EIXO)
+    ax.set_ylabel('Cluster', fontsize=FS_EIXO)
+    estilizar_heatmap(ax, rot_x=45)
 
-    ax.set_title(f'Composição {tipo} de Clusters por Cargo (K={k})', fontsize=FONTSIZE_TITULO)
-    ax.set_xlabel('Cargo (Designation)', fontsize=FONTSIZE_EIXO)
-    ax.set_ylabel('Cluster', fontsize=FONTSIZE_EIXO)
-    ax.tick_params(axis='x', rotation=45, labelsize=FONTSIZE_TICK)
-    ax.tick_params(axis='y', rotation=0, labelsize=FONTSIZE_TICK)
-
-    fig.patch.set_facecolor('white')
-    plt.tight_layout()
-    plt.show()
+    suplementar = (k != k_final)
+    nome = nome_base + f'_k{k}' if not suplementar else nome_base.replace('fig12_', '').replace('fig13_', '') + f'_k{k}'
+    salvar_figura(fig, nome, suplementar=suplementar)
 
     return tabela
 
@@ -814,14 +718,6 @@ tabelas_cargos_pct = {}
 for k in [4, 5, 6]:
     tabelas_cargos_abs[k] = plot_heatmap_cargos(k, normalizar=False)
     tabelas_cargos_pct[k] = plot_heatmap_cargos(k, normalizar=True)
-
-
-# ============================================================
-# TABELA — TAMANHO, PERCENTUAL, HABILIDADES PREDOMINANTES
-# E LIMITAÇÕES POR CLUSTER (pedida no e-mail 1 do professor)
-# ============================================================
-# A coluna "Pontos de atenção" é só um alerta automático de partida;
-# revise/complete manualmente antes de colar no TCC.
 
 def montar_tabela_resumo(k):
     base_temp = base.copy()
@@ -837,8 +733,7 @@ def montar_tabela_resumo(k):
         media_geral_cluster = perfil_c.mean()
 
         habilidades_predominantes = '; '.join(
-            f'{LABELS_HABILIDADES[skill].replace(chr(10), " ")} '
-            f'({valor:{FMT_PROFICIENCIA}})'
+            f'{nome_linha(skill)} ({fmt_br(valor, CASAS_PROFICIENCIA)})'
             for skill, valor in top3.items()
         )
 
@@ -882,12 +777,8 @@ for k in [4, 5, 6]:
     tabelas_resumo[k].to_csv(f'tabela_resumo_clusters_K{k}.csv', index=False, encoding='utf-8-sig')
 
 
-# ============================================================
-# FINALIZAÇÃO
-# ============================================================
-
 print("\n=== ANÁLISE CONCLUÍDA ===")
-print("Padronização aplicada: títulos, nomes de habilidades, casas decimais,")
-print("escalas de cor (0-4 para proficiência; 0-100% para cargos) e cores")
-print("fixas por cluster (1 a 6) em todos os gráficos, para K=4, K=5 e K=6.")
-print(f"K final utilizado nas análises detalhadas do TCC: K={k_final}")
+print(f'Figuras salvas em "{PASTA_FIGURAS}" (PNG {DPI_SAIDA} dpi'
+      f'{" + SVG" if SALVAR_SVG else ""}).')
+print("Sem títulos nas imagens; vírgula decimal; rótulos e cores padronizados;")
+print("escalas de cor fixas (0-4 para proficiência; 0-100% para cargos).")
